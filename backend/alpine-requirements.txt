@@ -1,0 +1,31 @@
+# System packages for Alpine Linux (apk add)
+# Install with: grep -v '^#' alpine-requirements.txt | xargs apk add --no-cache
+
+# --- Runtime (needed to run the application) ---
+python3
+py3-pip
+tesseract-ocr
+# English language data is bundled with tesseract-ocr on Alpine
+ghostscript
+libjpeg-turbo
+libpng
+openjpeg
+zlib
+libwebp
+
+# --- Build-time only (needed to compile Pillow / lxml / etc.) ---
+# gcc
+# musl-dev
+# python3-dev
+# jpeg-dev
+# zlib-dev
+# openjpeg-dev
+# tiff-dev
+# freetype-dev
+# lcms2-dev
+# libffi-dev
+# libwebp-dev
+# libpng-dev
+# openssl-dev
+# cargo
+# rust
