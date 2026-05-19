@@ -28,9 +28,9 @@ IMAGE_QUALITY = 90
 COMPRESS_LEVEL = 9
 
 # --- OCR settings ---
-OCR_LANGUAGE = "eng+por"      # Tesseract language code(s), e.g. "eng+por"
+OCR_LANGUAGE = "por+eng"      # Tesseract language code(s), e.g. "por+eng"
 OCR_SKIP_TEXT = True          # Only OCR pages that lack selectable text
-OCR_OPTIMIZE = 0              # We handle compression ourselves after merging
+OCR_OPTIMIZE = 1              # Light optimisation for ocrmypdf (1=light)
 OCR_DPI = 300                 # DPI for rendering pages to images before OCR
 
 
@@ -68,23 +68,30 @@ def validate_pdf(file: UploadFile) -> None:
 def ocr_pdf(input_path: Path, output_path: Path) -> None:
     """Run OCR on *input_path* and write the searchable PDF to *output_path*.
 
-    Only pages that lack selectable text are processed (``skip_text=True``)
-    so already-searchable PDFs pass through quickly.
+    Uses parameters and behaviour aligned with backend/ocr.py: deskew/rotate
+    and force OCR to ensure a searchable output. Language is passed as a
+    list (e.g. ['por','eng']).
     """
-    import ocrmypdf # type: ignore
+    import ocrmypdf  # type: ignore
 
     logger.info(
-        "Running OCR on %s (lang=%s, skip_text=%s, dpi=%d)…",
+        "Running OCR on %s (lang=%s, force_ocr=%s, dpi=%d)…",
         input_path.name,
         OCR_LANGUAGE,
-        OCR_SKIP_TEXT,
+        True,
         OCR_DPI,
     )
+
+    # ocrmypdf accepts a list of language codes
+    languages = OCR_LANGUAGE.split("+") if isinstance(OCR_LANGUAGE, str) else OCR_LANGUAGE
+
     ocrmypdf.ocr(
         str(input_path),
         str(output_path),
-        language=OCR_LANGUAGE,
-        skip_text=OCR_SKIP_TEXT,
+        language=languages,
+        deskew=True,
+        rotate_pages=True,
+        force_ocr=True,
         optimize=OCR_OPTIMIZE,
         output_type="pdf",
         pdf_render_dpi=OCR_DPI,
@@ -208,26 +215,8 @@ async def merge_pdfs(
         for src_path in source_files:
             writer.append(str(src_path))
 
-        # --- Step 4: shrink / compress ---
-        logger.info(
-            "Shrinking merged PDF (lossless content compression + image recompress @ %d%%)",
-            IMAGE_QUALITY,
-        )
-
-        for page in writer.pages:
-            page.compress_content_streams(level=COMPRESS_LEVEL)
-            for img in page.images:
-                try:
-                    img.replace(img.image, quality=IMAGE_QUALITY)
-                except Exception:
-                    logger.debug(
-                        "Could not recompress image %s", img.name, exc_info=True
-                    )
-
-        writer.compress_identical_objects(
-            remove_duplicates=True,
-            remove_unreferenced=True,
-        )
+        # --- Step 4: skipping compression ---
+        logger.info("Skipping compression step; preserving original page content and images.")
 
         # --- Step 5: write merged result ---
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as merged_tmp:
