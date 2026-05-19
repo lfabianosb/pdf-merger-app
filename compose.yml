@@ -1,0 +1,15 @@
+services:
+  pdf-merger:
+    build: .
+    image: pdf-merger:1.0
+    container_name: pdf-merger
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+    networks:
+      - reverse_proxy
+
+networks:
+  reverse_proxy:
+    external: true
