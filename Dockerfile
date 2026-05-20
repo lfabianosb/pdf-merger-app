@@ -45,6 +45,7 @@ RUN apk add --no-cache \
     tesseract-ocr \
     tesseract-ocr-data-eng \
     tesseract-ocr-data-por \
+    tesseract-ocr-data-osd \
     ghostscript \
     libjpeg-turbo \
     libpng \

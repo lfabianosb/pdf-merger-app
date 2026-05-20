@@ -6,13 +6,15 @@
 """
 
 import logging
+import os
+import subprocess
 import tempfile
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
@@ -28,9 +30,10 @@ MAX_TOTAL_SIZE_BYTES = MAX_TOTAL_SIZE_MB * 1024 * 1024
 IMAGE_QUALITY = 90        # JPEG quality for image→PDF conversion (0–100)
 COMPRESS_LEVEL = 9        # zlib compression for PDF streams (0–9)
 
-OCR_LANGUAGE = "por+eng"  # Tesseract language codes
-OCR_OPTIMIZE = 1           # ocrmypdf optimisation level (0–3)
-OCR_DPI = 300              # PDF render DPI before OCR
+OCR_LANGUAGE = os.getenv("OCR_LANGUAGE", "por+eng")  # Tesseract language codes
+OCR_OPTIMIZE = int(os.getenv("OCR_OPTIMIZE", "1"))       # ocrmypdf optimisation level (0-3)
+OCR_DPI = int(os.getenv("OCR_DPI", "300"))                # PDF render DPI before OCR
+OCR_ROTATE_PAGES = os.getenv("OCR_ROTATE_PAGES", "true").lower() in {"1", "true", "yes"}
 
 ALLOWED_IMAGE_MIME = {"image/png", "image/jpeg"}
 
@@ -44,6 +47,48 @@ def _is_ocrmypdf_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def _requested_ocr_languages() -> list[str]:
+    """Return configured Tesseract language codes."""
+    return [lang.strip() for lang in OCR_LANGUAGE.split("+") if lang.strip()]
+
+
+def _installed_tesseract_languages() -> list[str]:
+    """Return languages reported by the Tesseract binary."""
+    try:
+        result = subprocess.run(
+            ["tesseract", "--list-langs"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        logger.warning("Unable to list Tesseract languages: %s", exc)
+        return []
+
+    return [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip() and not line.startswith("List of available languages")
+    ]
+
+
+def _required_tesseract_languages() -> list[str]:
+    """Return all Tesseract language data needed by the current OCR settings."""
+    languages = _requested_ocr_languages()
+    if OCR_ROTATE_PAGES and "osd" not in languages:
+        languages.append("osd")
+    return languages
+
+
+def _missing_ocr_languages() -> list[str]:
+    """Return configured OCR languages that Tesseract cannot currently find."""
+    installed = set(_installed_tesseract_languages())
+    required = _required_tesseract_languages()
+    if not installed:
+        return required
+    return [lang for lang in required if lang not in installed]
 
 
 # ── Validation helpers ───────────────────────────────────────────────────────
@@ -104,17 +149,26 @@ def ocr_pdf(input_path: Path, output_path: Path) -> None:
     """
     import ocrmypdf  # type: ignore
 
-    languages = OCR_LANGUAGE.split("+")
+    languages = _requested_ocr_languages()
+    missing_languages = _missing_ocr_languages()
+    if missing_languages:
+        raise RuntimeError(
+            "Tesseract language data is missing for: "
+            f"{', '.join(missing_languages)}. "
+            f"Required languages: {_required_tesseract_languages()}. "
+            f"Installed languages: {_installed_tesseract_languages()}"
+        )
+
     logger.info(
         "OCR: %s  lang=%s  dpi=%d  force_ocr=True",
-        input_path.name, OCR_LANGUAGE, OCR_DPI,
+        input_path.name, "+".join(languages), OCR_DPI,
     )
     ocrmypdf.ocr(
         str(input_path),
         str(output_path),
         language=languages,
         deskew=True,
-        rotate_pages=True,
+        rotate_pages=OCR_ROTATE_PAGES,
         force_ocr=True,
         optimize=OCR_OPTIMIZE,
         output_type="pdf",
@@ -137,9 +191,11 @@ def save_upload(file: UploadFile) -> Path:
     return Path(tmp.name)
 
 
-def cleanup(*paths: Path) -> None:
+def cleanup(*paths: Path | None) -> None:
     """Safely delete multiple temporary files."""
     for p in paths:
+        if p is None:
+            continue
         with suppress(FileNotFoundError):
             p.unlink()
 
@@ -149,11 +205,24 @@ def cleanup(*paths: Path) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Log warnings about missing optional dependencies on startup."""
+    """Log OCR dependency status on startup."""
     if not _is_ocrmypdf_available():
         logger.warning(
             "ocrmypdf is not installed — /api/ocr will be unavailable. "
             "Install it with: pip install ocrmypdf"
+        )
+    installed_languages = _installed_tesseract_languages()
+    missing_languages = _missing_ocr_languages()
+    logger.info(
+        "OCR configured languages=%s required_tesseract_languages=%s installed_tesseract_languages=%s",
+        "+".join(_requested_ocr_languages()),
+        _required_tesseract_languages(),
+        installed_languages,
+    )
+    if missing_languages:
+        logger.warning(
+            "Missing Tesseract language data for configured OCR languages: %s",
+            ", ".join(missing_languages),
         )
     yield
 
@@ -176,15 +245,49 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(HTTPException)
+async def log_http_exception(request: Request, exc: HTTPException) -> JSONResponse:
+    """Log handled API errors before returning FastAPI's normal error shape."""
+    logger.warning(
+        "HTTP error on %s %s: status=%s detail=%r",
+        request.method,
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(Exception)
+async def log_unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    """Log unexpected errors with a traceback so failures show up in server logs."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error."},
+    )
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
 @app.get("/api/health")
 async def health() -> dict:
     """Health check — also reports whether OCR is available."""
+    installed_languages = _installed_tesseract_languages()
+    missing_languages = _missing_ocr_languages()
     return {
         "status": "ok",
-        "ocr_available": _is_ocrmypdf_available(),
+        "ocr_available": _is_ocrmypdf_available() and not missing_languages,
+        "ocr_configured_languages": _requested_ocr_languages(),
+        "ocr_rotate_pages": OCR_ROTATE_PAGES,
+        "required_tesseract_languages": _required_tesseract_languages(),
+        "tesseract_languages": installed_languages,
+        "missing_ocr_languages": missing_languages,
     }
 
 
@@ -298,6 +401,13 @@ async def ocr_endpoint(
         ocr_pdf(work_pdf, output_path)
 
     except Exception as exc:
+        logger.exception(
+            "OCR failed for filename=%r content_type=%r input_tmp=%s work_pdf=%s",
+            file.filename,
+            file.content_type,
+            input_tmp,
+            work_pdf,
+        )
         cleanup(input_tmp, work_pdf)
         raise HTTPException(status_code=500, detail=f"OCR failed: {exc}") from exc
     finally:
