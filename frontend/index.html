@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PDF Merger</title>
+  <title>PDF Tools</title>
   <style>
     :root {
       --bg: #0d1117;
@@ -17,6 +17,7 @@
       --danger-hover: #ff7b72;
       --success: #238636;
       --success-hover: #2ea043;
+      --warning: #d2991d;
       --radius: 10px;
     }
 
@@ -33,19 +34,54 @@
       padding: 40px 20px;
     }
 
-    h1 { margin-bottom: 8px; font-size: 1.75rem; }
-    p.subtitle { color: var(--text-secondary); margin-bottom: 24px; }
+    h1 { margin-bottom: 4px; font-size: 1.75rem; }
+    p.subtitle { color: var(--text-secondary); margin-bottom: 24px; font-size: 0.95rem; }
 
-    .container {
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: -1px;
       width: 100%;
-      max-width: 560px;
-      background: var(--surface);
+      max-width: 680px;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 12px 16px;
       border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 28px;
+      background: var(--bg);
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: background 0.2s, color 0.2s;
+    }
+    .tab-btn:first-child { border-radius: var(--radius) 0 0 0; }
+    .tab-btn:last-child  { border-radius: 0 var(--radius) 0 0; }
+    .tab-btn:not(:first-child):not(:last-child) { border-radius: 0; }
+    .tab-btn.active {
+      background: var(--surface);
+      color: var(--text);
+      border-bottom-color: var(--surface);
+    }
+    .tab-btn:hover:not(.active) {
+      background: var(--surface);
+      color: var(--text);
     }
 
-    /* Drop zone */
+    /* ── Panels ── */
+    .container {
+      width: 100%;
+      max-width: 680px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0 var(--radius) var(--radius) var(--radius);
+      padding: 28px;
+    }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Drop zone ── */
     .drop-zone {
       border: 2px dashed var(--border);
       border-radius: var(--radius);
@@ -55,7 +91,8 @@
       transition: border-color 0.2s, background 0.2s;
       position: relative;
     }
-    .drop-zone:hover, .drop-zone.dragover {
+    .drop-zone:hover,
+    .drop-zone.dragover {
       border-color: var(--accent);
       background: rgba(88, 166, 255, 0.05);
     }
@@ -65,14 +102,10 @@
       opacity: 0;
       cursor: pointer;
     }
-    .drop-zone .icon {
-      font-size: 2.5rem;
-      margin-bottom: 12px;
-      opacity: 0.7;
-    }
-    .drop-zone .hint { color: var(--text-secondary); font-size: 0.9rem; margin-top: 6px; }
+    .drop-zone .icon { font-size: 2.5rem; margin-bottom: 12px; opacity: 0.7; }
+    .drop-zone .hint { color: var(--text-secondary); font-size: 0.85rem; margin-top: 6px; }
 
-    /* File list */
+    /* ── File list ── */
     .file-list {
       margin-top: 20px;
       display: flex;
@@ -100,20 +133,14 @@
       font-size: 1.2rem;
       user-select: none;
     }
-    .file-item .info {
-      flex: 1;
-      min-width: 0;
-    }
+    .file-item .info { flex: 1; min-width: 0; }
     .file-item .name {
       font-size: 0.92rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .file-item .size {
-      font-size: 0.75rem;
-      color: var(--text-secondary);
-    }
+    .file-item .size { font-size: 0.75rem; color: var(--text-secondary); }
     .file-item .remove {
       background: transparent;
       border: none;
@@ -126,7 +153,30 @@
     }
     .file-item .remove:hover { background: rgba(248, 81, 73, 0.15); }
 
-    /* Actions */
+    /* ── Index table ── */
+    .index-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      font-size: 0.9rem;
+    }
+    .index-table th,
+    .index-table td {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .index-table th {
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .index-table tr:last-child td { border-bottom: none; }
+    .index-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* ── Actions ── */
     .actions {
       margin-top: 20px;
       display: flex;
@@ -151,16 +201,20 @@
       color: #fff;
     }
     .btn-primary:hover { background: var(--success-hover); }
-    .btn-primary:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-accent {
+      background: var(--accent);
+      color: #fff;
     }
+    .btn-accent:hover { background: var(--accent-hover); }
+    .btn-accent:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-secondary {
       background: var(--border);
       color: var(--text);
     }
     .btn-secondary:hover { background: #484f58; }
 
+    /* ── Status ── */
     .status {
       margin-top: 16px;
       padding: 12px 14px;
@@ -187,6 +241,7 @@
       color: var(--accent-hover);
     }
 
+    /* ── Spinner ── */
     .spinner {
       width: 16px;
       height: 16px;
@@ -194,6 +249,7 @@
       border-top-color: #fff;
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
+      display: inline-block;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -212,46 +268,96 @@
 </head>
 <body>
 
-  <h1>📄 PDF Merger</h1>
-  <p class="subtitle">Upload multiple PDFs, reorder them, and merge into one file.</p>
+  <h1>📄 PDF Tools</h1>
+  <p class="subtitle">Merge, OCR, and index your PDF files — all in the browser.</p>
 
+  <!-- ── Tabs ── -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="merge">📑 Merge</button>
+    <button class="tab-btn" data-tab="ocr">🔍 OCR</button>
+    <button class="tab-btn" data-tab="index">📋 Index</button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       PANEL 1 — MERGE
+       ════════════════════════════════════════════════════════════════════ -->
   <div class="container">
-    <div class="drop-zone" id="dropZone">
-      <input type="file" id="fileInput" multiple accept=".pdf,application/pdf">
-      <div class="icon">📁</div>
-      <div><strong>Click to choose files</strong> or drag &amp; drop here</div>
-      <div class="hint">Only PDF files are accepted</div>
+    <div class="panel active" id="panel-merge">
+      <div class="drop-zone" id="dropMerge">
+        <input type="file" id="fileMerge" multiple accept=".pdf,application/pdf">
+        <div class="icon">📁</div>
+        <div><strong>Click to choose PDFs</strong> or drag &amp; drop here</div>
+        <div class="hint">Select two or more PDF files to merge</div>
+      </div>
+      <div class="file-list" id="listMerge"></div>
+      <div class="total-size" id="sizeMerge"></div>
+      <div class="actions">
+        <button class="btn btn-secondary" id="clearMerge" type="button">Clear All</button>
+        <button class="btn btn-primary" id="btnMerge" type="button" disabled>
+          <span id="textMerge">Merge PDFs</span>
+        </button>
+      </div>
+      <div class="status" id="statusMerge"></div>
     </div>
 
-    <div class="file-list" id="fileList"></div>
-    <div class="total-size" id="totalSize"></div>
-
-    <div class="actions">
-      <button class="btn btn-secondary" id="clearBtn" type="button">Clear All</button>
-      <button class="btn btn-primary" id="mergeBtn" type="button" disabled>
-        <span id="btnText">Merge PDFs</span>
-      </button>
+    <!-- ═════════════════════════════════════════════════════════════════════
+         PANEL 2 — OCR
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="panel" id="panel-ocr">
+      <div class="drop-zone" id="dropOcr">
+        <input type="file" id="fileOcr" accept=".png,.jpg,.jpeg,.pdf,application/pdf,image/png,image/jpeg">
+        <div class="icon">🔍</div>
+        <div><strong>Click to choose a file</strong> or drag &amp; drop here</div>
+        <div class="hint">PNG, JPEG or PDF — one file at a time</div>
+      </div>
+      <div class="file-list" id="listOcr"></div>
+      <div class="actions">
+        <button class="btn btn-secondary" id="clearOcr" type="button">Clear</button>
+        <button class="btn btn-accent" id="btnOcr" type="button" disabled>
+          <span id="textOcr">Run OCR</span>
+        </button>
+      </div>
+      <div class="status" id="statusOcr"></div>
     </div>
 
-    <div class="status" id="status"></div>
+    <!-- ═════════════════════════════════════════════════════════════════════
+         PANEL 3 — INDEX
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="panel" id="panel-index">
+      <div class="drop-zone" id="dropIndex">
+        <input type="file" id="fileIndex" multiple accept=".pdf,application/pdf">
+        <div class="icon">📋</div>
+        <div><strong>Click to choose PDFs</strong> or drag &amp; drop here</div>
+        <div class="hint">Select PDF files to generate a concatenation index</div>
+      </div>
+      <div class="file-list" id="listIndex"></div>
+      <div class="total-size" id="sizeIndex"></div>
+      <div class="actions">
+        <button class="btn btn-secondary" id="clearIndex" type="button">Clear All</button>
+        <button class="btn btn-accent" id="btnIndex" type="button" disabled>
+          <span id="textIndex">Generate Index</span>
+        </button>
+      </div>
+      <div class="status" id="statusIndex"></div>
+      <table class="index-table" id="indexTable" style="display:none">
+        <thead>
+          <tr>
+            <th>File name</th>
+            <th class="num">Start page</th>
+            <th class="num">End page</th>
+            <th class="num">Pages</th>
+          </tr>
+        </thead>
+        <tbody id="indexBody"></tbody>
+      </table>
+    </div>
   </div>
 
   <script>
-    const API_URL = '/api/merge';
+    // ── Constants ─────────────────────────────────────────────────────────
     const MAX_TOTAL_MB = 50;
 
-    const dropZone = document.getElementById('dropZone');
-    const fileInput = document.getElementById('fileInput');
-    const fileList = document.getElementById('fileList');
-    const mergeBtn = document.getElementById('mergeBtn');
-    const clearBtn = document.getElementById('clearBtn');
-    const status = document.getElementById('status');
-    const totalSizeEl = document.getElementById('totalSize');
-    const btnText = document.getElementById('btnText');
-
-    let files = [];
-    let dragSrcIndex = null;
-
+    // ── Utilities ─────────────────────────────────────────────────────────
     function formatBytes(bytes) {
       if (bytes === 0) return '0 B';
       const k = 1024;
@@ -260,159 +366,411 @@
       return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    function updateTotalSize() {
-      const total = files.reduce((sum, f) => sum + f.size, 0);
-      totalSizeEl.textContent = files.length > 0
-        ? `Total: ${formatBytes(total)} / ${MAX_TOTAL_MB} MB`
-        : '';
-    }
-
-    function showStatus(msg, type) {
-      status.className = 'status ' + type;
-      status.innerHTML = msg;
-    }
-
-    function clearStatus() {
-      status.className = 'status';
-      status.textContent = '';
-    }
-
-    function renderList() {
-      fileList.innerHTML = '';
-      files.forEach((file, index) => {
-        const item = document.createElement('div');
-        item.className = 'file-item';
-        item.draggable = true;
-        item.dataset.index = index;
-        item.innerHTML = `
-          <span class="grip">☰</span>
-          <div class="info">
-            <div class="name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</div>
-            <div class="size">${formatBytes(file.size)}</div>
-          </div>
-          <button class="remove" data-index="${index}" title="Remove">✕</button>
-        `;
-
-        item.addEventListener('dragstart', (e) => {
-          dragSrcIndex = index;
-          item.classList.add('dragging');
-          e.dataTransfer.effectAllowed = 'move';
-        });
-        item.addEventListener('dragend', () => {
-          item.classList.remove('dragging');
-          document.querySelectorAll('.file-item').forEach(el => el.style.borderTop = '');
-        });
-        item.addEventListener('dragover', (e) => {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-        });
-        item.addEventListener('drop', (e) => {
-          e.preventDefault();
-          const targetIndex = parseInt(item.dataset.index);
-          if (dragSrcIndex !== null && dragSrcIndex !== targetIndex) {
-            const moved = files.splice(dragSrcIndex, 1)[0];
-            files.splice(targetIndex, 0, moved);
-            renderList();
-          }
-        });
-
-        item.querySelector('.remove').addEventListener('click', (e) => {
-          e.stopPropagation();
-          files.splice(parseInt(e.target.dataset.index), 1);
-          renderList();
-          updateMergeButton();
-        });
-
-        fileList.appendChild(item);
-      });
-
-      updateTotalSize();
-    }
-
     function escapeHtml(str) {
       const div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
     }
 
-    function addFiles(newFiles) {
-      const total = files.reduce((s, f) => s + f.size, 0);
-      const incoming = newFiles.reduce((s, f) => s + f.size, 0);
-      if (total + incoming > MAX_TOTAL_MB * 1024 * 1024) {
-        showStatus(`Total size exceeds ${MAX_TOTAL_MB}MB limit.`, 'error');
-        return;
+    function showStatus(el, msg, type) {
+      el.className = 'status ' + type;
+      el.innerHTML = msg;
+    }
+
+    function clearStatus(el) {
+      el.className = 'status';
+      el.textContent = '';
+    }
+
+    // ── Tabs ──────────────────────────────────────────────────────────────
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+      });
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  MERGE PANEL
+    // ═══════════════════════════════════════════════════════════════════════
+    (function () {
+      const dropZone = document.getElementById('dropMerge');
+      const fileInput = document.getElementById('fileMerge');
+      const listEl = document.getElementById('listMerge');
+      const btn = document.getElementById('btnMerge');
+      const btnText = document.getElementById('textMerge');
+      const clearBtn = document.getElementById('clearMerge');
+      const statusEl = document.getElementById('statusMerge');
+      const sizeEl = document.getElementById('sizeMerge');
+      const API = '/api/merge';
+
+      let files = [];
+      let dragSrc = null;
+
+      function updateTotal() {
+        const total = files.reduce((s, f) => s + f.size, 0);
+        sizeEl.textContent = files.length
+          ? `Total: ${formatBytes(total)} / ${MAX_TOTAL_MB} MB`
+          : '';
       }
-      for (const f of newFiles) {
-        if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) {
-          showStatus(`"${escapeHtml(f.name)}" is not a PDF file.`, 'error');
+
+      function updateBtn() { btn.disabled = files.length < 2; }
+
+      function render() {
+        listEl.innerHTML = '';
+        files.forEach((f, i) => {
+          const item = document.createElement('div');
+          item.className = 'file-item';
+          item.draggable = true;
+          item.dataset.index = i;
+          item.innerHTML = `
+            <span class="grip">☰</span>
+            <div class="info">
+              <div class="name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+              <div class="size">${formatBytes(f.size)}</div>
+            </div>
+            <button class="remove" data-index="${i}" title="Remove">✕</button>`;
+          item.addEventListener('dragstart', e => {
+            dragSrc = i;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+          });
+          item.addEventListener('dragend', () => item.classList.remove('dragging'));
+          item.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          });
+          item.addEventListener('drop', e => {
+            e.preventDefault();
+            const target = parseInt(item.dataset.index);
+            if (dragSrc !== null && dragSrc !== target) {
+              const [moved] = files.splice(dragSrc, 1);
+              files.splice(target, 0, moved);
+              render();
+            }
+          });
+          item.querySelector('.remove').addEventListener('click', e => {
+            e.stopPropagation();
+            files.splice(parseInt(e.target.dataset.index), 1);
+            render();
+            updateBtn();
+          });
+          listEl.appendChild(item);
+        });
+        updateTotal();
+      }
+
+      function add(newFiles) {
+        const total = files.reduce((s, f) => s + f.size, 0);
+        const incoming = [...newFiles].reduce((s, f) => s + f.size, 0);
+        if (total + incoming > MAX_TOTAL_MB * 1024 * 1024) {
+          showStatus(statusEl, `Total size exceeds ${MAX_TOTAL_MB} MB limit.`, 'error');
+          return false;
+        }
+        const invalid = [...newFiles].find(
+          f => f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')
+        );
+        if (invalid) {
+          showStatus(statusEl, `"${escapeHtml(invalid.name)}" is not a PDF file.`, 'error');
+          return false;
+        }
+        clearStatus(statusEl);
+        files.push(...newFiles);
+        render();
+        updateBtn();
+        return true;
+      }
+
+      fileInput.addEventListener('change', e => {
+        if (e.target.files.length) add(e.target.files);
+        fileInput.value = '';
+      });
+      dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) add(e.dataTransfer.files);
+      });
+      clearBtn.addEventListener('click', () => {
+        files = [];
+        render();
+        updateBtn();
+        clearStatus(statusEl);
+      });
+      btn.addEventListener('click', async () => {
+        if (files.length < 2) return;
+        clearStatus(statusEl);
+        btn.disabled = true;
+        btnText.innerHTML = '<span class="spinner"></span> Merging...';
+        const fd = new FormData();
+        files.forEach(f => fd.append('files', f));
+        try {
+          const res = await fetch(API, { method: 'POST', body: fd });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `Server error: ${res.status}`);
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'merged.pdf';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          showStatus(statusEl, `✅ Merged! <a class="download-link" href="${url}" download="merged.pdf">Download again</a>`, 'success');
+        } catch (err) {
+          showStatus(statusEl, '❌ ' + escapeHtml(err.message), 'error');
+        } finally {
+          btn.disabled = files.length < 2;
+          btnText.textContent = 'Merge PDFs';
+        }
+      });
+    })();
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  OCR PANEL
+    // ═══════════════════════════════════════════════════════════════════════
+    (function () {
+      const dropZone = document.getElementById('dropOcr');
+      const fileInput = document.getElementById('fileOcr');
+      const listEl = document.getElementById('listOcr');
+      const btn = document.getElementById('btnOcr');
+      const btnText = document.getElementById('textOcr');
+      const clearBtn = document.getElementById('clearOcr');
+      const statusEl = document.getElementById('statusOcr');
+      const API = '/api/ocr';
+
+      let file = null;
+
+      function render() {
+        listEl.innerHTML = '';
+        if (!file) return;
+        const item = document.createElement('div');
+        item.className = 'file-item';
+        item.innerHTML = `
+          <span class="grip">📄</span>
+          <div class="info">
+            <div class="name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</div>
+            <div class="size">${formatBytes(file.size)}</div>
+          </div>
+          <button class="remove" title="Remove">✕</button>`;
+        item.querySelector('.remove').addEventListener('click', () => {
+          file = null;
+          render();
+          btn.disabled = true;
+          clearStatus(statusEl);
+        });
+        listEl.appendChild(item);
+        btn.disabled = false;
+      }
+
+      function set(newFile) {
+        if (newFile.size > MAX_TOTAL_MB * 1024 * 1024) {
+          showStatus(statusEl, `File exceeds ${MAX_TOTAL_MB} MB limit.`, 'error');
           return;
         }
+        file = newFile;
+        clearStatus(statusEl);
+        render();
       }
-      clearStatus();
-      files.push(...newFiles);
-      renderList();
-      updateMergeButton();
-    }
 
-    function updateMergeButton() {
-      mergeBtn.disabled = files.length < 2;
-    }
-
-    fileInput.addEventListener('change', (e) => {
-      if (e.target.files.length) addFiles([...e.target.files]);
-      fileInput.value = '';
-    });
-
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.classList.add('dragover');
-    });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('dragover');
-      if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]);
-    });
-
-    clearBtn.addEventListener('click', () => {
-      files = [];
-      renderList();
-      updateMergeButton();
-      clearStatus();
-    });
-
-    mergeBtn.addEventListener('click', async () => {
-      if (files.length < 2) return;
-      clearStatus();
-      mergeBtn.disabled = true;
-      btnText.innerHTML = '<div class="spinner"></div> Merging...';
-
-      const formData = new FormData();
-      files.forEach(f => formData.append('files', f));
-
-      try {
-        const res = await fetch(API_URL, { method: 'POST', body: formData });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || `Server error: ${res.status}`);
+      fileInput.addEventListener('change', e => {
+        if (e.target.files.length) set(e.target.files[0]);
+        fileInput.value = '';
+      });
+      dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) set(e.dataTransfer.files[0]);
+      });
+      clearBtn.addEventListener('click', () => {
+        file = null;
+        render();
+        btn.disabled = true;
+        clearStatus(statusEl);
+      });
+      btn.addEventListener('click', async () => {
+        if (!file) return;
+        clearStatus(statusEl);
+        btn.disabled = true;
+        btnText.innerHTML = '<span class="spinner"></span> Running OCR...';
+        const fd = new FormData();
+        fd.append('files', file);
+        try {
+          const res = await fetch(API, { method: 'POST', body: fd });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `Server error: ${res.status}`);
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = file.name.replace(/\.(png|jpe?g|pdf)$/i, '') + '_searchable.pdf';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          showStatus(statusEl, `✅ OCR complete! <a class="download-link" href="${url}" download="${a.download}">Download again</a>`, 'success');
+        } catch (err) {
+          showStatus(statusEl, '❌ ' + escapeHtml(err.message), 'error');
+        } finally {
+          btn.disabled = !file;
+          btnText.textContent = 'Run OCR';
         }
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = 'merged.pdf';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-        showStatus('✅ Merged successfully! <a class="download-link" href="' + url + '" download="merged.pdf">Download again</a>', 'success');
-      } catch (err) {
-        showStatus('❌ ' + escapeHtml(err.message), 'error');
-      } finally {
-        mergeBtn.disabled = files.length < 2;
-        btnText.textContent = 'Merge PDFs';
+      });
+    })();
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  INDEX PANEL
+    // ═══════════════════════════════════════════════════════════════════════
+    (function () {
+      const dropZone = document.getElementById('dropIndex');
+      const fileInput = document.getElementById('fileIndex');
+      const listEl = document.getElementById('listIndex');
+      const btn = document.getElementById('btnIndex');
+      const btnText = document.getElementById('textIndex');
+      const clearBtn = document.getElementById('clearIndex');
+      const statusEl = document.getElementById('statusIndex');
+      const sizeEl = document.getElementById('sizeIndex');
+      const tbl = document.getElementById('indexTable');
+      const tbody = document.getElementById('indexBody');
+      const API = '/api/index';
+
+      let files = [];
+      let dragSrc = null;
+
+      function updateTotal() {
+        const total = files.reduce((s, f) => s + f.size, 0);
+        sizeEl.textContent = files.length
+          ? `Total: ${formatBytes(total)} / ${MAX_TOTAL_MB} MB`
+          : '';
       }
-    });
+
+      function updateBtn() { btn.disabled = files.length === 0; }
+
+      function render() {
+        listEl.innerHTML = '';
+        files.forEach((f, i) => {
+          const item = document.createElement('div');
+          item.className = 'file-item';
+          item.draggable = true;
+          item.dataset.index = i;
+          item.innerHTML = `
+            <span class="grip">☰</span>
+            <div class="info">
+              <div class="name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+              <div class="size">${formatBytes(f.size)}</div>
+            </div>
+            <button class="remove" data-index="${i}" title="Remove">✕</button>`;
+          item.addEventListener('dragstart', e => {
+            dragSrc = i;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+          });
+          item.addEventListener('dragend', () => item.classList.remove('dragging'));
+          item.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          });
+          item.addEventListener('drop', e => {
+            e.preventDefault();
+            const target = parseInt(item.dataset.index);
+            if (dragSrc !== null && dragSrc !== target) {
+              const [moved] = files.splice(dragSrc, 1);
+              files.splice(target, 0, moved);
+              render();
+            }
+          });
+          item.querySelector('.remove').addEventListener('click', e => {
+            e.stopPropagation();
+            files.splice(parseInt(e.target.dataset.index), 1);
+            render();
+            updateBtn();
+          });
+          listEl.appendChild(item);
+        });
+        updateTotal();
+        tbl.style.display = 'none';
+      }
+
+      function add(newFiles) {
+        const total = files.reduce((s, f) => s + f.size, 0);
+        const incoming = [...newFiles].reduce((s, f) => s + f.size, 0);
+        if (total + incoming > MAX_TOTAL_MB * 1024 * 1024) {
+          showStatus(statusEl, `Total size exceeds ${MAX_TOTAL_MB} MB limit.`, 'error');
+          return;
+        }
+        const invalid = [...newFiles].find(
+          f => f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')
+        );
+        if (invalid) {
+          showStatus(statusEl, `"${escapeHtml(invalid.name)}" is not a PDF file.`, 'error');
+          return;
+        }
+        clearStatus(statusEl);
+        files.push(...newFiles);
+        render();
+        updateBtn();
+      }
+
+      fileInput.addEventListener('change', e => {
+        if (e.target.files.length) add(e.target.files);
+        fileInput.value = '';
+      });
+      dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) add(e.dataTransfer.files);
+      });
+      clearBtn.addEventListener('click', () => {
+        files = [];
+        render();
+        updateBtn();
+        clearStatus(statusEl);
+        tbl.style.display = 'none';
+      });
+      btn.addEventListener('click', async () => {
+        if (!files.length) return;
+        clearStatus(statusEl);
+        btn.disabled = true;
+        btnText.innerHTML = '<span class="spinner"></span> Generating...';
+        const fd = new FormData();
+        files.forEach(f => fd.append('files', f));
+        try {
+          const res = await fetch(API, { method: 'POST', body: fd });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `Server error: ${res.status}`);
+          }
+          const data = await res.json();
+          tbody.innerHTML = '';
+          data.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${escapeHtml(row.filename)}</td>
+              <td class="num">${row.start_page}</td>
+              <td class="num">${row.end_page}</td>
+              <td class="num">${row.total_pages}</td>`;
+            tbody.appendChild(tr);
+          });
+          tbl.style.display = '';
+          showStatus(statusEl, '✅ Index generated from <strong>' + data.length + '</strong> file(s).', 'success');
+        } catch (err) {
+          showStatus(statusEl, '❌ ' + escapeHtml(err.message), 'error');
+        } finally {
+          btn.disabled = files.length === 0;
+          btnText.textContent = 'Generate Index';
+        }
+      });
+    })();
   </script>
 
 </body>

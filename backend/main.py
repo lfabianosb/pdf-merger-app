@@ -1,41 +1,44 @@
-"""PDF Merger Backend — FastAPI application that merges multiple PDF files
-with optional OCR to make image-based text searchable."""
+"""PDF Merger Backend — FastAPI application with three endpoints:
+
+    POST /api/merge  – Merge multiple PDFs into one
+    POST /api/ocr    – Run OCR on an image or PDF, return a searchable PDF
+    POST /api/index  – Return a JSON page index for a list of PDFs
+"""
 
 import logging
 import tempfile
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from starlette.background import BackgroundTask
 
 logger = logging.getLogger(__name__)
 
+# ── Configuration ────────────────────────────────────────────────────────────
+
 MAX_TOTAL_SIZE_MB = 50
 MAX_TOTAL_SIZE_BYTES = MAX_TOTAL_SIZE_MB * 1024 * 1024
 
-# --- Shrink settings ---
-# Image recompression quality (0–100). 90 keeps visual quality near-original
-# while reducing file size for PNG/JPEG images embedded in the PDF.
-IMAGE_QUALITY = 90
+IMAGE_QUALITY = 90        # JPEG quality for image→PDF conversion (0–100)
+COMPRESS_LEVEL = 9        # zlib compression for PDF streams (0–9)
 
-# zlib compression level for page content streams (0–9). 9 = best lossless
-# compression, higher CPU cost.
-COMPRESS_LEVEL = 9
+OCR_LANGUAGE = "por+eng"  # Tesseract language codes
+OCR_OPTIMIZE = 1           # ocrmypdf optimisation level (0–3)
+OCR_DPI = 300              # PDF render DPI before OCR
 
-# --- OCR settings ---
-OCR_LANGUAGE = "por+eng"      # Tesseract language code(s), e.g. "por+eng"
-OCR_SKIP_TEXT = True          # Only OCR pages that lack selectable text
-OCR_OPTIMIZE = 1              # Light optimisation for ocrmypdf (1=light)
-OCR_DPI = 300                 # DPI for rendering pages to images before OCR
+ALLOWED_IMAGE_MIME = {"image/png", "image/jpeg"}
+
+# ── Optional dependency checks ───────────────────────────────────────────────
 
 
 def _is_ocrmypdf_available() -> bool:
-    """Check whether ocrmypdf (and tesseract) are installed."""
+    """Return True if ocrmypdf (and its Tesseract dependency) are installed."""
     try:
         import ocrmypdf  # type: ignore # noqa: F401
         return True
@@ -43,13 +46,16 @@ def _is_ocrmypdf_available() -> bool:
         return False
 
 
+# ── Validation helpers ───────────────────────────────────────────────────────
+
+
 def validate_pdf(file: UploadFile) -> None:
-    """Validate that the uploaded file is a valid PDF."""
+    """Raise HTTPException if *file* is not a valid PDF."""
     content_type = file.content_type or ""
     if content_type != "application/pdf":
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type '{content_type}'. Only PDF files are allowed.",
+            detail=f"Invalid file type '{content_type}'. Only PDF files are accepted.",
         )
 
     header = file.file.read(5)
@@ -65,26 +71,44 @@ def validate_pdf(file: UploadFile) -> None:
         file.file.seek(0)
 
 
-def ocr_pdf(input_path: Path, output_path: Path) -> None:
-    """Run OCR on *input_path* and write the searchable PDF to *output_path*.
+def validate_image_or_pdf(file: UploadFile) -> None:
+    """Raise HTTPException if *file* is not a PNG, JPEG, or PDF."""
+    content_type = file.content_type or ""
+    if content_type == "application/pdf":
+        validate_pdf(file)
+        return
+    if content_type in ALLOWED_IMAGE_MIME:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported file type '{content_type}'. Allowed: PNG, JPEG, PDF.",
+    )
 
-    Uses parameters and behaviour aligned with backend/ocr.py: deskew/rotate
-    and force OCR to ensure a searchable output. Language is passed as a
-    list (e.g. ['por','eng']).
+
+# ── Processing helpers ───────────────────────────────────────────────────────
+
+
+def image_to_pdf(image_path: Path, pdf_path: Path) -> None:
+    """Convert a raster image (PNG/JPEG) to a single-page PDF."""
+    img = Image.open(image_path)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    img.save(str(pdf_path), "PDF", quality=IMAGE_QUALITY)
+
+
+def ocr_pdf(input_path: Path, output_path: Path) -> None:
+    """Run ocrmypdf on *input_path*, writing a searchable PDF to *output_path*.
+
+    Handles deskew, rotation, and forces OCR so scanned/image-based pages
+    always receive a text layer.
     """
     import ocrmypdf  # type: ignore
 
+    languages = OCR_LANGUAGE.split("+")
     logger.info(
-        "Running OCR on %s (lang=%s, force_ocr=%s, dpi=%d)…",
-        input_path.name,
-        OCR_LANGUAGE,
-        True,
-        OCR_DPI,
+        "OCR: %s  lang=%s  dpi=%d  force_ocr=True",
+        input_path.name, OCR_LANGUAGE, OCR_DPI,
     )
-
-    # ocrmypdf accepts a list of language codes
-    languages = OCR_LANGUAGE.split("+") if isinstance(OCR_LANGUAGE, str) else OCR_LANGUAGE
-
     ocrmypdf.ocr(
         str(input_path),
         str(output_path),
@@ -99,21 +123,47 @@ def ocr_pdf(input_path: Path, output_path: Path) -> None:
     )
 
 
+def get_page_count(pdf_path: Path) -> int:
+    """Return the number of pages in a PDF file."""
+    return len(PdfReader(str(pdf_path)).pages)
+
+
+def save_upload(file: UploadFile) -> Path:
+    """Write an uploaded file to a temporary location and return its Path."""
+    suffix = Path(file.filename or "upload").suffix
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.write(file.file.read())
+    tmp.close()
+    return Path(tmp.name)
+
+
+def cleanup(*paths: Path) -> None:
+    """Safely delete multiple temporary files."""
+    for p in paths:
+        with suppress(FileNotFoundError):
+            p.unlink()
+
+
+# ── Lifespan ─────────────────────────────────────────────────────────────────
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup/shutdown events."""
+    """Log warnings about missing optional dependencies on startup."""
     if not _is_ocrmypdf_available():
         logger.warning(
-            "ocrmypdf is not installed — OCR will be unavailable. "
+            "ocrmypdf is not installed — /api/ocr will be unavailable. "
             "Install it with: pip install ocrmypdf"
         )
     yield
 
 
+# ── App ──────────────────────────────────────────────────────────────────────
+
 app = FastAPI(
-    title="PDF Merger API",
-    description="Merge multiple PDF files into a single PDF, with optional OCR.",
-    version="1.1.0",
+    title="PDF Tools API",
+    description="Merge PDFs, run OCR, and generate indexes.",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -126,138 +176,205 @@ app.add_middleware(
 )
 
 
+# ── Endpoints ────────────────────────────────────────────────────────────────
+
+
 @app.get("/api/health")
 async def health() -> dict:
-    """Health check endpoint."""
-    ocr_available = _is_ocrmypdf_available()
+    """Health check — also reports whether OCR is available."""
     return {
         "status": "ok",
-        "ocr_available": ocr_available,
+        "ocr_available": _is_ocrmypdf_available(),
     }
 
 
-@app.post("/api/merge")
+@app.post("/api/merge", summary="Merge PDFs")
 async def merge_pdfs(
-    request: Request,
     files: list[UploadFile],
-    ocr: bool = Query(
-        default=True,
-        description="Whether to run OCR on image-based pages before merging.",
-    ),
 ) -> FileResponse:
-    """Receive a list of PDF files, optionally OCR them, merge in order, and return the result."""
+    """Receive multiple PDFs, merge them in upload order, return a single PDF."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
-
     if len(files) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 PDF files are required.")
+
+    # ── Size validation ──
+    total = 0
+    for f in files:
+        content = await f.read()
+        total += len(content)
+        f.file.seek(0)
+    if total > MAX_TOTAL_SIZE_BYTES:
         raise HTTPException(
-            status_code=400,
-            detail="At least 2 PDF files are required for merging.",
+            status_code=413,
+            detail=f"Total file size exceeds {MAX_TOTAL_SIZE_MB} MB limit.",
         )
 
-    if ocr and not _is_ocrmypdf_available():
-        raise HTTPException(
-            status_code=501,
-            detail="OCR was requested but ocrmypdf is not installed on the server.",
-        )
+    # ── Content validation ──
+    for f in files:
+        validate_pdf(f)
 
-    total_size = 0
-    for pdf in files:
-        content = await pdf.read()
-        total_size += len(content)
-        pdf.file.seek(0)
-        if total_size > MAX_TOTAL_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Total file size exceeds {MAX_TOTAL_SIZE_MB}MB limit.",
-            )
-
-    for pdf in files:
-        validate_pdf(pdf)
-
+    # ── Merge ──
+    temp_files: list[Path] = []
     writer = PdfWriter()
-    temp_input_files: list[Path] = []
-    ocr_temp_files: list[Path] = []
 
     try:
-        # --- Step 1: save each uploaded PDF to a temp file ---
-        for pdf in files:
-            suffix = Path(pdf.filename or "document.pdf").suffix
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                content = await pdf.read()
-                tmp.write(content)
-                temp_input_files.append(Path(tmp.name))
+        for f in files:
+            temp_files.append(save_upload(f))
 
-        # --- Step 2: OCR each file (if enabled), producing searchable copies ---
-        if ocr:
-            for tmp_path in temp_input_files:
-                with tempfile.NamedTemporaryFile(
-                    delete=False, suffix=".pdf"
-                ) as ocr_tmp:
-                    ocr_output_path = Path(ocr_tmp.name)
-                ocr_temp_files.append(ocr_output_path)
+        for src in temp_files:
+            writer.append(str(src))
 
-                try:
-                    ocr_pdf(tmp_path, ocr_output_path)
-                except Exception:
-                    logger.exception(
-                        "OCR failed for %s — falling back to original", tmp_path.name
-                    )
-                    # Discard the (possibly empty) OCR output and keep original
-                    with suppress(FileNotFoundError):
-                        ocr_output_path.unlink()
-                    ocr_temp_files[-1] = tmp_path  # use original for this file
-            source_files = ocr_temp_files
-        else:
-            source_files = temp_input_files
-
-        # --- Step 3: append each (possibly OCR'd) file to the merged PDF ---
-        for src_path in source_files:
-            writer.append(str(src_path))
-
-        # --- Step 4: skipping compression ---
-        logger.info("Skipping compression step; preserving original page content and images.")
-
-        # --- Step 5: write merged result ---
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as merged_tmp:
-            output_path = Path(merged_tmp.name)
-
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            output_path = Path(tmp.name)
         writer.write(str(output_path))
         writer.close()
 
     except Exception as exc:
         writer.close()
-        for tmp_path in temp_input_files:
-            with suppress(FileNotFoundError):
-                tmp_path.unlink()
-        for tmp_path in ocr_temp_files:
-            with suppress(FileNotFoundError):
-                tmp_path.unlink()
-        raise HTTPException(
-            status_code=500, detail=f"Failed to merge PDFs: {exc}"
-        ) from exc
-
+        cleanup(*temp_files)
+        raise HTTPException(status_code=500, detail=f"Failed to merge PDFs: {exc}") from exc
     finally:
-        for tmp_path in temp_input_files:
-            with suppress(FileNotFoundError):
-                tmp_path.unlink()
-        # Only clean OCR temp files that aren't aliased to input files
-        if ocr:
-            input_set = set(temp_input_files)
-            for tmp_path in ocr_temp_files:
-                if tmp_path not in input_set:
-                    with suppress(FileNotFoundError):
-                        tmp_path.unlink()
+        writer.close()
+        cleanup(*temp_files)
 
     return FileResponse(
         path=output_path,
         filename="merged.pdf",
         media_type="application/pdf",
-        background=BackgroundTask(lambda p=output_path: p.unlink(missing_ok=True)),
+        background=BackgroundTask(lambda: cleanup(output_path)),
     )
 
 
-# ── Static files mount (MUST come last so API routes take precedence) ──
+@app.post("/api/ocr", summary="OCR a file")
+async def ocr_endpoint(
+    files: list[UploadFile],
+) -> FileResponse:
+    """Receive a single PNG/JPEG/PDF, OCR it, and return a searchable PDF."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No file provided.")
+    if len(files) > 1:
+        raise HTTPException(status_code=400, detail="Only one file is accepted for OCR.")
+
+    if not _is_ocrmypdf_available():
+        raise HTTPException(
+            status_code=501,
+            detail="OCR is unavailable — ocrmypdf is not installed on the server.",
+        )
+
+    file = files[0]
+
+    # ── Size validation ──
+    content = await file.read()
+    file.file.seek(0)
+    if len(content) > MAX_TOTAL_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size exceeds {MAX_TOTAL_SIZE_MB} MB limit.",
+        )
+
+    # ── Content validation ──
+    validate_image_or_pdf(file)
+
+    # ── Process ──
+    input_tmp: Path | None = None
+    work_pdf: Path | None = None
+
+    try:
+        input_tmp = save_upload(file)
+        content_type = file.content_type or ""
+
+        if content_type in ALLOWED_IMAGE_MIME:
+            # Convert image → PDF, then OCR that PDF
+            work_pdf = Path(tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name)
+            image_to_pdf(input_tmp, work_pdf)
+        else:
+            # Already a PDF — OCR directly
+            work_pdf = input_tmp
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            output_path = Path(tmp.name)
+
+        ocr_pdf(work_pdf, output_path)
+
+    except Exception as exc:
+        cleanup(input_tmp, work_pdf)
+        raise HTTPException(status_code=500, detail=f"OCR failed: {exc}") from exc
+    finally:
+        if work_pdf is not input_tmp:
+            cleanup(input_tmp)   # keep work_pdf for response
+        if work_pdf is input_tmp:
+            pass  # input_tmp is also work_pdf, cleaned up below if needed
+
+    # Clean up intermediate files (but NOT output_path — that's the response)
+    if content_type in ALLOWED_IMAGE_MIME:
+        # input_tmp (image) and work_pdf (temp PDF) both can go
+        cleanup(input_tmp, work_pdf)
+    else:
+        cleanup(input_tmp)  # input_tmp was the PDF we OCR'd
+
+    base_name = Path(file.filename or "document").stem
+
+    return FileResponse(
+        path=output_path,
+        filename=f"{base_name}_searchable.pdf",
+        media_type="application/pdf",
+        background=BackgroundTask(lambda: cleanup(output_path)),
+    )
+
+
+@app.post("/api/index", summary="Generate PDF index")
+async def index_pdfs(
+    files: list[UploadFile],
+):
+    """Receive multiple PDFs and return a JSON page index as if they were concatenated."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    # ── Size validation ──
+    total = 0
+    for f in files:
+        content = await f.read()
+        total += len(content)
+        f.file.seek(0)
+    if total > MAX_TOTAL_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Total file size exceeds {MAX_TOTAL_SIZE_MB} MB limit.",
+        )
+
+    # ── Content validation ──
+    for f in files:
+        validate_pdf(f)
+
+    # ── Build index ──
+    temp_files: list[Path] = []
+    index: list[dict] = []
+    current_page = 1
+
+    try:
+        for f in files:
+            tmp = save_upload(f)
+            temp_files.append(tmp)
+            pages = get_page_count(tmp)
+            index.append({
+                "filename": f.filename or "unknown.pdf",
+                "start_page": current_page,
+                "end_page": current_page + pages - 1,
+                "total_pages": pages,
+            })
+            current_page += pages
+
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read PDFs: {exc}") from exc
+    finally:
+        cleanup(*temp_files)
+
+    return index
+
+
+# ── Static files (MUST be last so API routes take precedence) ────────────────
+
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 if FRONTEND_DIR.is_dir():

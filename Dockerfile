@@ -43,6 +43,8 @@ FROM python:3.12-alpine
 # Runtime-only system packages (no build tools)
 RUN apk add --no-cache \
     tesseract-ocr \
+    tesseract-ocr-data-eng \
+    tesseract-ocr-data-por \
     ghostscript \
     libjpeg-turbo \
     libpng \
@@ -57,11 +59,8 @@ COPY --from=builder /venv /venv
 ENV PATH="/venv/bin:$PATH"
 
 # Copy application code
-COPY backend/main.py backend/run.sh backend/
+COPY backend/main.py backend/
 COPY frontend/ frontend/
-
-# Make run.sh executable
-RUN chmod +x backend/run.sh
 
 ENV PYTHONUNBUFFERED=1
 
