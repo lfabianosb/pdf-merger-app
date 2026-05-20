@@ -326,11 +326,16 @@ async def merge_pdfs(
             temp_files.append(save_upload(f))
 
         for src in temp_files:
-            writer.append(str(src))
+            reader = PdfReader(str(src))
+            for page in reader.pages:
+                writer.add_page(page)
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             output_path = Path(tmp.name)
-        writer.write(str(output_path))
+
+        # Write the merged PDF to a binary file object
+        with open(output_path, "wb") as out_f:
+            writer.write(out_f)
         writer.close()
 
     except Exception as exc:
