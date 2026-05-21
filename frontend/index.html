@@ -153,6 +153,21 @@
     }
     .file-item .remove:hover { background: rgba(248, 81, 73, 0.15); }
 
+    /* ── Cover badge ── */
+    .cover-badge {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
     /* ── Index table ── */
     .index-table {
       width: 100%;
@@ -175,6 +190,58 @@
     }
     .index-table tr:last-child td { border-bottom: none; }
     .index-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* ── Index preview (mimics the PDF cover index) ── */
+    .index-preview {
+      margin-top: 20px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px 28px;
+      font-family: "Courier New", Courier, monospace;
+      font-size: 0.9rem;
+      line-height: 1.7;
+    }
+    .index-preview-title {
+      text-align: center;
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 6px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .index-preview-sep {
+      border: none;
+      border-top: 1px solid var(--text-secondary);
+      margin: 8px 0 14px;
+      opacity: 0.5;
+    }
+    .index-preview .preview-item {
+      display: flex;
+      align-items: baseline;
+    }
+    .index-preview .bullet {
+      flex-shrink: 0;
+      margin-right: 6px;
+    }
+    .index-preview .fname {
+      flex-shrink: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .index-preview .dots {
+      flex: 1;
+      border-bottom: 1px dotted var(--text-secondary);
+      margin: 0 8px;
+      min-width: 16px;
+      align-self: flex-end;
+      margin-bottom: 5px;
+      opacity: 0.45;
+    }
+    .index-preview .pgnum {
+      flex-shrink: 0;
+      font-weight: 600;
+    }
 
     /* ── Actions ── */
     .actions {
@@ -276,6 +343,7 @@
     <button class="tab-btn active" data-tab="merge">📑 Merge</button>
     <button class="tab-btn" data-tab="ocr">🔍 OCR</button>
     <button class="tab-btn" data-tab="index">📋 Index</button>
+    <button class="tab-btn" data-tab="merge-index">📑📋 Merge &amp; Index</button>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -350,6 +418,32 @@
         </thead>
         <tbody id="indexBody"></tbody>
       </table>
+    </div>
+
+    <!-- ═════════════════════════════════════════════════════════════════
+         PANEL 4 — MERGE & INDEX
+         ════════════════════════════════════════════════════════════════ -->
+    <div class="panel" id="panel-merge-index">
+      <div class="drop-zone" id="dropMergeIndex">
+        <input type="file" id="fileMergeIndex" multiple accept=".pdf,application/pdf">
+        <div class="icon">📑</div>
+        <div><strong>Click to choose PDFs</strong> or drag &amp; drop here</div>
+        <div class="hint">First file = cover page. Index is added to cover, then all merged.</div>
+      </div>
+      <div class="file-list" id="listMergeIndex"></div>
+      <div class="total-size" id="sizeMergeIndex"></div>
+      <div class="actions">
+        <button class="btn btn-secondary" id="clearMergeIndex" type="button">Clear All</button>
+        <button class="btn btn-primary" id="btnMergeIndex" type="button" disabled>
+          <span id="textMergeIndex">Merge with Index</span>
+        </button>
+      </div>
+      <div class="status" id="statusMergeIndex"></div>
+      <div class="index-preview" id="indexPreview" style="display:none">
+        <div class="index-preview-title">Document Index</div>
+        <hr class="index-preview-sep">
+        <div id="indexPreviewBody"></div>
+      </div>
     </div>
   </div>
 
@@ -768,6 +862,178 @@
         } finally {
           btn.disabled = files.length === 0;
           btnText.textContent = 'Generate Index';
+        }
+      });
+    })();
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  MERGE & INDEX PANEL
+    // ═══════════════════════════════════════════════════════════════════
+    (function () {
+      const dropZone = document.getElementById('dropMergeIndex');
+      const fileInput = document.getElementById('fileMergeIndex');
+      const listEl = document.getElementById('listMergeIndex');
+      const btn = document.getElementById('btnMergeIndex');
+      const btnText = document.getElementById('textMergeIndex');
+      const clearBtn = document.getElementById('clearMergeIndex');
+      const statusEl = document.getElementById('statusMergeIndex');
+      const sizeEl = document.getElementById('sizeMergeIndex');
+      const preview = document.getElementById('indexPreview');
+      const previewBody = document.getElementById('indexPreviewBody');
+      const API = '/api/merge-index';
+
+      let files = [];
+      let dragSrc = null;
+
+      function updateTotal() {
+        const total = files.reduce((s, f) => s + f.size, 0);
+        sizeEl.textContent = files.length
+          ? `Total: ${formatBytes(total)} / ${MAX_TOTAL_MB} MB`
+          : '';
+      }
+
+      function updateBtn() { btn.disabled = files.length < 2; }
+
+      function render() {
+        listEl.innerHTML = '';
+        files.forEach((f, i) => {
+          const item = document.createElement('div');
+          item.className = 'file-item';
+          item.draggable = true;
+          item.dataset.index = i;
+          const badge = i === 0 ? ' <span class="cover-badge">Cover</span>' : '';
+          item.innerHTML = `
+            <span class="grip">☰</span>
+            <div class="info">
+              <div class="name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}${badge}</div>
+              <div class="size">${formatBytes(f.size)}</div>
+            </div>
+            <button class="remove" data-index="${i}" title="Remove">✕</button>`;
+          item.addEventListener('dragstart', e => {
+            dragSrc = i;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+          });
+          item.addEventListener('dragend', () => item.classList.remove('dragging'));
+          item.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          });
+          item.addEventListener('drop', e => {
+            e.preventDefault();
+            const target = parseInt(item.dataset.index);
+            if (dragSrc !== null && dragSrc !== target) {
+              const [moved] = files.splice(dragSrc, 1);
+              files.splice(target, 0, moved);
+              render();
+            }
+          });
+          item.querySelector('.remove').addEventListener('click', e => {
+            e.stopPropagation();
+            files.splice(parseInt(e.target.dataset.index), 1);
+            render();
+            updateBtn();
+          });
+          listEl.appendChild(item);
+        });
+        updateTotal();
+        preview.style.display = 'none';
+      }
+
+      function add(newFiles) {
+        const total = files.reduce((s, f) => s + f.size, 0);
+        const incoming = [...newFiles].reduce((s, f) => s + f.size, 0);
+        if (total + incoming > MAX_TOTAL_MB * 1024 * 1024) {
+          showStatus(statusEl, `Total size exceeds ${MAX_TOTAL_MB} MB limit.`, 'error');
+          return false;
+        }
+        const invalid = [...newFiles].find(
+          f => f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')
+        );
+        if (invalid) {
+          showStatus(statusEl, `"${escapeHtml(invalid.name)}" is not a PDF file.`, 'error');
+          return false;
+        }
+        clearStatus(statusEl);
+        files.push(...newFiles);
+        render();
+        updateBtn();
+        return true;
+      }
+
+      function showIndexPreview(data) {
+        previewBody.innerHTML = '';
+        data.forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'preview-item';
+          const displayName = item.filename.length > 40
+            ? item.filename.substring(0, 37) + '...'
+            : item.filename;
+          row.innerHTML = `
+            <span class="bullet">•</span>
+            <span class="fname" title="${escapeHtml(item.filename)}">${escapeHtml(displayName)}</span>
+            <span class="dots"></span>
+            <span class="pgnum">${item.start_page}</span>`;
+          previewBody.appendChild(row);
+        });
+        preview.style.display = '';
+      }
+
+      fileInput.addEventListener('change', e => {
+        if (e.target.files.length) add(e.target.files);
+        fileInput.value = '';
+      });
+      dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) add(e.dataTransfer.files);
+      });
+      clearBtn.addEventListener('click', () => {
+        files = [];
+        render();
+        updateBtn();
+        clearStatus(statusEl);
+        preview.style.display = 'none';
+      });
+      btn.addEventListener('click', async () => {
+        if (files.length < 2) return;
+        clearStatus(statusEl);
+        preview.style.display = 'none';
+        btn.disabled = true;
+        btnText.innerHTML = '<span class="spinner"></span> Merging with index...';
+        const fd = new FormData();
+        files.forEach(f => fd.append('files', f));
+        try {
+          const res = await fetch(API, { method: 'POST', body: fd });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `Server error: ${res.status}`);
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'merged_with_index.pdf';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+
+          // Build a client-side preview of the index (matches backend structure)
+          const previewData = [];
+          let pg = 1;
+          files.forEach(f => {
+            previewData.push({ filename: f.name, start_page: pg });
+            pg += 1;
+          });
+          showIndexPreview(previewData);
+          showStatus(statusEl, `✅ Done! <a class="download-link" href="${url}" download="merged_with_index.pdf">Download merged PDF with index</a>`, 'success');
+        } catch (err) {
+          showStatus(statusEl, '❌ ' + escapeHtml(err.message), 'error');
+        } finally {
+          btn.disabled = files.length < 2;
+          btnText.textContent = 'Merge with Index';
         }
       });
     })();
