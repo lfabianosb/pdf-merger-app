@@ -224,6 +224,12 @@ async def lifespan(app: FastAPI):
             "Missing Tesseract language data for configured OCR languages: %s",
             ", ".join(missing_languages),
         )
+
+    # ── Suppress pypdf's chatty "Ignoring wrong pointing object" warnings ──
+    # These occur on PDFs with slightly malformed cross-reference tables;
+    # pypdf handles them gracefully and the objects are still read correctly.
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
+
     yield
 
 
@@ -317,6 +323,15 @@ async def merge_pdfs(
     for f in files:
         validate_pdf(f)
 
+    # ── Log merge start ──
+    filenames = [f.filename or "unnamed" for f in files]
+    logger.info(
+        "Merge request: %d files | total_size=%.2f MB | files=%s",
+        len(files),
+        total / (1024 * 1024),
+        filenames,
+    )
+
     # ── Merge ──
     temp_files: list[Path] = []
     writer = PdfWriter()
@@ -338,7 +353,15 @@ async def merge_pdfs(
             writer.write(out_f)
         writer.close()
 
+        logger.info(
+            "Merge complete: %d files merged into %s (%d pages)",
+            len(files),
+            output_path.name,
+            len(PdfReader(str(output_path)).pages),
+        )
+
     except Exception as exc:
+        logger.exception("Merge failed for files: %s", filenames)
         writer.close()
         cleanup(*temp_files)
         raise HTTPException(status_code=500, detail=f"Failed to merge PDFs: {exc}") from exc
@@ -487,149 +510,6 @@ async def index_pdfs(
 
     return index
 
-
-@app.post("/api/merge-index", summary="Merge PDFs with cover page index")
-async def merge_index(
-    files: list[UploadFile],
-) -> FileResponse:
-    """Receive 2+ PDFs, draw an index on the bottom of the first page
-    (cover page), then merge the cover with all remaining files.
-
-    The index follows the visual format from the reference image:
-    centered title, horizontal separator, bullet items with
-    right-aligned start page numbers.
-    """
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided.")
-    if len(files) < 2:
-        raise HTTPException(status_code=400, detail="At least 2 PDF files are required.")
-
-    # ── Size validation ──
-    total = 0
-    for f in files:
-        content = await f.read()
-        total += len(content)
-        f.file.seek(0)
-    if total > MAX_TOTAL_SIZE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Total file size exceeds {MAX_TOTAL_SIZE_MB} MB limit.",
-        )
-
-    # ── Content validation ──
-    for f in files:
-        validate_pdf(f)
-
-    # ── Save uploads & compute page index ──
-    temp_files: list[Path] = []
-    index_data: list[dict] = []
-
-    try:
-        for f in files:
-            temp_files.append(save_upload(f))
-
-        filenames = [f.filename or f"file_{i}.pdf" for i, f in enumerate(files)]
-        page_counts = [get_page_count(p) for p in temp_files]
-
-        current_page = 1
-        for name, count in zip(filenames, page_counts):
-            index_data.append({
-                "filename": name,
-                "start_page": current_page,
-                "end_page": current_page + count - 1,
-            })
-            current_page += count
-
-    except Exception as exc:
-        cleanup(*temp_files)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to read PDFs: {exc}"
-        ) from exc
-
-    # ── Build cover with index overlay ──
-    from io import BytesIO
-
-    from reportlab.lib.units import mm
-    from reportlab.pdfgen import canvas as rl_canvas
-
-    cover_reader = PdfReader(str(temp_files[0]))
-    cover_page = cover_reader.pages[0]
-
-    page_width = float(cover_page.mediabox.width)
-    page_height = float(cover_page.mediabox.height)
-
-    # Create a single-page PDF overlay containing the index
-    overlay_buf = BytesIO()
-    c = rl_canvas.Canvas(overlay_buf, pagesize=(page_width, page_height))
-
-    # ── Title ──
-    c.setFont("Helvetica-Bold", 13)
-    c.drawCentredString(page_width / 2, 90, "Document Index")
-
-    # ── Horizontal separator ──
-    c.setLineWidth(0.5)
-    c.setStrokeGray(0.3)
-    c.line(45, 78, page_width - 45, 78)
-
-    # ── Bullet items ──
-    c.setFont("Helvetica", 10)
-    y = 60
-    for item in index_data:
-        c.drawString(50, y, f"\u2022  {item['filename']}")
-        c.drawRightString(page_width - 50, y, str(item["start_page"]))
-        y -= 18
-        if y < 10:
-            break  # safety — don't draw below page
-
-    c.save()
-    overlay_buf.seek(0)
-
-    overlay_reader = PdfReader(overlay_buf)
-    overlay_page = overlay_reader.pages[0]
-
-    # Superimpose the index overlay onto the cover page
-    cover_page.merge_page(overlay_page)
-
-    # ── Merge everything ──
-    writer = PdfWriter()
-
-    try:
-        # Cover page (with index)
-        writer.add_page(cover_page)
-
-        # Remaining pages of the first file
-        for page in cover_reader.pages[1:]:
-            writer.add_page(page)
-
-        # All remaining files
-        for src in temp_files[1:]:
-            reader = PdfReader(str(src))
-            for page in reader.pages:
-                writer.add_page(page)
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            output_path = Path(tmp.name)
-
-        with open(output_path, "wb") as out_f:
-            writer.write(out_f)
-        writer.close()
-
-    except Exception as exc:
-        writer.close()
-        cleanup(*temp_files)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to merge PDFs with index: {exc}"
-        ) from exc
-    finally:
-        writer.close()
-        cleanup(*temp_files)
-
-    return FileResponse(
-        path=output_path,
-        filename="merged_with_index.pdf",
-        media_type="application/pdf",
-        background=BackgroundTask(lambda: cleanup(output_path)),
-    )
 
 
 # ── Static files (MUST be last so API routes take precedence) ────────────────
