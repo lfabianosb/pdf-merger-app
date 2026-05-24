@@ -12,13 +12,13 @@ import tempfile
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from PIL import Image
-from pypdf import PdfReader, PdfWriter
-from starlette.background import BackgroundTask
+from fastapi import FastAPI, HTTPException, Request, UploadFile # type: ignore
+from fastapi.middleware.cors import CORSMiddleware # type: ignore
+from fastapi.responses import FileResponse, JSONResponse # type: ignore
+from fastapi.staticfiles import StaticFiles # type: ignore
+from PIL import Image # type: ignore
+from pypdf import PdfReader, PdfWriter # type: ignore
+from starlette.background import BackgroundTask # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +31,10 @@ IMAGE_QUALITY = 90        # JPEG quality for image→PDF conversion (0–100)
 COMPRESS_LEVEL = 9        # zlib compression for PDF streams (0–9)
 
 OCR_LANGUAGE = os.getenv("OCR_LANGUAGE", "por+eng")  # Tesseract language codes
-OCR_OPTIMIZE = int(os.getenv("OCR_OPTIMIZE", "1"))       # ocrmypdf optimisation level (0-3)
-OCR_DPI = int(os.getenv("OCR_DPI", "300"))                # PDF render DPI before OCR
+OCR_OPTIMIZE = int(os.getenv("OCR_OPTIMIZE", "1"))   # ocrmypdf optimisation level (0-3)
+OCR_DPI = int(os.getenv("OCR_DPI", "300"))           # PDF render DPI before OCR
 OCR_ROTATE_PAGES = os.getenv("OCR_ROTATE_PAGES", "true").lower() in {"1", "true", "yes"}
+REPLICA_ID = os.getenv("REPLICA_ID", "unknown")
 
 ALLOWED_IMAGE_MIME = {"image/png", "image/jpeg"}
 
@@ -294,6 +295,7 @@ async def health() -> dict:
         "required_tesseract_languages": _required_tesseract_languages(),
         "tesseract_languages": installed_languages,
         "missing_ocr_languages": missing_languages,
+        "replica_id": REPLICA_ID,
     }
 
 

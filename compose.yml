@@ -1,9 +1,24 @@
 services:
-  pdf-merger:
+  pdf-merger-1:
     build: .
     image: pdf-merger:1.0
-    container_name: pdf-merger
+    container_name: pdf-merger-1
     restart: unless-stopped
+    environment:
+      - REPLICA_ID=1
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+    networks:
+      - reverse_proxy
+
+  pdf-merger-2:
+    build: .
+    image: pdf-merger:1.0
+    container_name: pdf-merger-2
+    restart: unless-stopped
+    environment:
+      - REPLICA_ID=2
     volumes:
       - ./backend:/app/backend
       - ./frontend:/app/frontend
