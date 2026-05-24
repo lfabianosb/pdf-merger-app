@@ -1,5 +1,13 @@
-GET http://127.0.0.1:8000/api/health
+GET http://pdf.warobot.cloud/api/health
 
 ###
 
-POST http://127.0.0.1:8000/api/merge
+POST http://pdf.warobot.cloud/api/merge
+Content-Type: application/json
+
+{
+  "files": [
+    "file1.pdf",
+    "file2.pdf"
+  ]
+}
