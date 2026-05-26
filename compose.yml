@@ -6,11 +6,24 @@ services:
     restart: unless-stopped
     environment:
       - REPLICA_ID=1
+      - PYTHONUNBUFFERED=1
     volumes:
       - ./backend:/app/backend
       - ./frontend:/app/frontend
     networks:
       - reverse_proxy
+      - monitoring
+    labels:
+      - "app=pdf-merger"
+      - "component=backend"
+      - "replica=1"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "app,component,replica"
+        env: "REPLICA_ID"
 
   pdf-merger-2:
     build: .
@@ -19,12 +32,27 @@ services:
     restart: unless-stopped
     environment:
       - REPLICA_ID=2
+      - PYTHONUNBUFFERED=1
     volumes:
       - ./backend:/app/backend
       - ./frontend:/app/frontend
     networks:
       - reverse_proxy
+      - monitoring
+    labels:
+      - "app=pdf-merger"
+      - "component=backend"
+      - "replica=2"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "app,component,replica"
+        env: "REPLICA_ID"
 
 networks:
   reverse_proxy:
+    external: true
+  monitoring:
     external: true
